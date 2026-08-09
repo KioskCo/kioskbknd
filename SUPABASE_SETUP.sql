@@ -40,6 +40,23 @@ CREATE TABLE IF NOT EXISTS users (
 -- Backfill new columns if table already existed
 ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_domain             TEXT UNIQUE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS custom_domain_verified    BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS signup_order              INTEGER;
+
+-- Backfill existing users in signup (created_at) order so early users count
+-- toward the promotions. Rules enforced by the API:
+--   • signup_order <= 100  → free beta access (until admin disables it)
+--   • waitlist members     → 20% discount forever (already existing)
+--   • signup_order <= 1000, NOT on waitlist → 20% off 6/12-month plans
+--     for the first 3 months after signup (created_at + 3 months)
+WITH numbered AS (
+  SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS seq
+  FROM users
+  WHERE signup_order IS NULL
+)
+UPDATE users u
+SET signup_order = numbered.seq
+FROM numbered
+WHERE u.id = numbered.id;
 
 -- ── otp_sessions ─────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS otp_sessions (
@@ -428,7 +445,7 @@ CREATE TABLE IF NOT EXISTS contact_messages (
 );
 
 -- ── waitlist ─────────────────────────────────────────────────
--- Early-access signups who receive 30% off their first subscription.
+-- Early-access signups who receive 20% off their first subscription.
 
 CREATE TABLE IF NOT EXISTS waitlist (
   id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -503,6 +520,23 @@ CREATE TABLE IF NOT EXISTS disputes (
 );
 CREATE INDEX IF NOT EXISTS idx_disputes_order_id  ON disputes(order_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_status    ON disputes(status);
+
+-- ── app_settings ─────────────────────────────────────────────────────────
+-- Platform-level key/value settings (admin managed). Holds the beta program toggle.
+-- See also: users.signup_order (early-adopter 20% discount + free beta).
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed the beta toggle (ON by default).
+INSERT INTO app_settings (key, value)
+VALUES ('beta_testing_enabled', 'true')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE INDEX IF NOT EXISTS idx_users_signup_order ON users(signup_order);
 
 -- ── abandoned_carts ─────────────────────────────────────────────────────────
 -- Tracks storefront carts that were not checked out.

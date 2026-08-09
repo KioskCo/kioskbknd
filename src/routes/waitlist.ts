@@ -1,5 +1,5 @@
 /**
- * Waitlist routes — early-access signup with 30% subscription discount.
+ * Waitlist routes — early-access signup with 20% subscription discount.
  *
  * POST /api/waitlist          — add email to waitlist (public)
  * GET  /api/waitlist/check    — check if the authenticated user's email is on waitlist (auth required)
@@ -13,7 +13,7 @@ import { requireAuth } from "../middlewares/auth.js";
 
 const router = Router();
 
-export const WAITLIST_DISCOUNT = 0.30; // 30% off
+export const WAITLIST_DISCOUNT = 0.20; // 20% off
 
 // ─── POST /api/waitlist ───────────────────────────────────────────────────────
 
@@ -35,7 +35,7 @@ router.post("/waitlist", async (req, res) => {
       .insert(waitlist)
       .values({ email, phone, name })
       .onConflictDoNothing();
-    res.json({ success: true, message: "You're on the waitlist! You'll receive 30% off your first subscription." });
+    res.json({ success: true, message: "You're on the waitlist! You'll receive 20% off your first subscription." });
   } catch (err) {
     res.status(500).json({ success: false, error: "Could not join waitlist" });
   }

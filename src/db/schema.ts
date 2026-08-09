@@ -45,6 +45,10 @@ export const users = pgTable("users", {
   businessAddress: text("business_address"),
   referralCode:    text("referral_code").unique(),
   referredById:    text("referred_by_id"),
+  // 1-based signup order. Smallest orders = earliest signups. Used for the
+  // free-beta (first 100) program and the early-adopter offer (first 1000,
+  // non-waitlist, 20% off 6/12-month plans for the first 3 months after signup).
+  signupOrder:     integer("signup_order"),
   // Vendor-configured delivery charges shown at checkout (defaults = platform rates).
   deliveryFeeLagos:   decimal("delivery_fee_lagos", { precision: 12, scale: 2 }).default("1500"),
   deliveryFeeOther:   decimal("delivery_fee_other", { precision: 12, scale: 2 }).default("3500"),
@@ -508,4 +512,13 @@ export const waitlist = pgTable("waitlist", {
   phone:     text("phone"),
   name:      text("name"),
   createdAt: createdAt(),
+});
+
+// ─── app_settings ─────────────────────────────────────────────────────────────
+// Platform-level key/value settings (admin managed). e.g. beta program switch.
+
+export const appSettings = pgTable("app_settings", {
+  key:       text("key").primaryKey(),
+  value:     text("value"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });

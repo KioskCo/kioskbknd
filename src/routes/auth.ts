@@ -183,10 +183,15 @@ router.post("/auth/verify-email", authLimiter, async (req, res) => {
 
   await db.update(otpSessions).set({ used: true }).where(eq(otpSessions.id, session.id));
 
-  // Mark the user as verified
+  // Mark the user as verified, assigning the signup order once on first
+  // verification (used by the early-adopter / beta promotions).
   const [user] = await db
     .update(users)
-    .set({ emailVerified: true, updatedAt: new Date() })
+    .set({
+      emailVerified: true,
+      signupOrder: sql`COALESCE(signup_order, (SELECT COALESCE(MAX(signup_order), 0) + 1 FROM users))`,
+      updatedAt: new Date(),
+    })
     .where(eq(users.email, lowerEmail))
     .returning();
 

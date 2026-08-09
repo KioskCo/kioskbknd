@@ -16,6 +16,7 @@ import { sendPushToMany } from "../lib/pushNotifications.js";
 import { getPushTokens } from "./auth.js";
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify } from "../lib/paystack.js";
 import { initializePayment as flwInit, verifyPayment as flwVerify } from "../lib/flutterwave.js";
+import { isBetaTester, isEarlyAdopterActive, EARLY_ADOPTER_DISCOUNT } from "../lib/settings.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -42,6 +43,24 @@ const ADMIN_EMAILS = (process.env["ADMIN_EMAILS"] ?? "")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);
 
+async function getSignupOrder(userId: string): Promise<number | null> {
+  const [user] = await db.select({ signupOrder: users.signupOrder }).from(users).where(eq(users.id, userId)).limit(1);
+  return user?.signupOrder ?? null;
+}
+
+function freeActiveSub(userId: string): Record<string, unknown> {
+  return {
+    id: "beta",
+    userId,
+    plan: "yearly",
+    status: "active",
+    startDate: new Date("2024-01-01").toISOString(),
+    endDate:   new Date("2099-01-01").toISOString(),
+    paymentProvider: null,
+    paymentReference: null,
+  };
+}
+
 router.get("/subscriptions/me", async (req, res) => {
   // Admin accounts get a permanent free subscription
   if (ADMIN_EMAILS.length > 0 && ADMIN_EMAILS.includes((req.user!.email ?? "").toLowerCase())) {
@@ -58,6 +77,12 @@ router.get("/subscriptions/me", async (req, res) => {
         paymentReference: null,
       },
     });
+  }
+
+  // Beta testers get free access while the beta program is enabled.
+  const order = await getSignupOrder(req.user!.userId);
+  if (await isBetaTester(order)) {
+    return res.json({ success: true, data: freeActiveSub(req.user!.userId) });
   }
 
   const [sub] = await db
@@ -95,15 +120,46 @@ router.post("/subscriptions/pay", async (req, res) => {
 
   const [user] = await db.select().from(users).where(eq(users.id, req.user!.userId)).limit(1);
 
-  // Apply 30% waitlist discount if the user's email is on the waitlist
+  const signupOrder = user?.signupOrder ?? null;
+  const betaTester = await isBetaTester(signupOrder);
+
+  // Beta testers get the plan free while the beta program is live.
+  if (betaTester) {
+    const reference = `kiosk-beta-${req.user!.userId}-${plan}${Date.now()}`;
+    req.log.info({ userId: req.user!.userId, plan }, "Beta tester requested free subscription");
+    res.json({
+      success: true,
+      data: {
+        paymentUrl: null,
+        free: true,
+        reference,
+        provider,
+        plan,
+        months: planInfo.months,
+        amount: 0,
+        originalAmount: planInfo.amount,
+        betaFree: true,
+      },
+    });
+    return;
+  }
+
+  // Waitlist members keep a 20% discount on every plan — forever.
+  // Non-waitlist, first-1000 early adopters get 20% off 6/12-month plans,
+  // but only within 3 months of signing up (isEarlyAdopterActive).
   let discountedAmount = planInfo.amount;
   let isWaitlistMember = false;
+  let earlyAdopterDiscount = false;
   if (user?.email) {
     const [wlEntry] = await db.select({ id: waitlist.id }).from(waitlist).where(eq(waitlist.email, user.email)).limit(1);
     if (wlEntry) {
       isWaitlistMember = true;
-      discountedAmount = Math.round(planInfo.amount * 0.70); // 30% off
+      discountedAmount = Math.round(planInfo.amount * 0.80); // 20% off (forever)
     }
+  }
+  if (!isWaitlistMember && isEarlyAdopterActive({ signupOrder, createdAt: user?.createdAt }) && (plan === "6months" || plan === "yearly")) {
+    discountedAmount = Math.round(planInfo.amount * (1 - EARLY_ADOPTER_DISCOUNT));
+    earlyAdopterDiscount = true;
   }
 
   const reference = `kiosk-sub-${req.user!.userId}-${plan}${months ? `-${months}mo` : ""}-${Date.now()}`;
@@ -133,7 +189,7 @@ router.post("/subscriptions/pay", async (req, res) => {
     paymentUrl = result.paymentLink;
   }
 
-  res.json({ success: true, data: { paymentUrl, reference, provider, plan, months: planInfo.months, amount: discountedAmount, originalAmount: planInfo.amount, waitlistDiscount: isWaitlistMember } });
+  res.json({ success: true, data: { paymentUrl, reference, provider, plan, months: planInfo.months, amount: discountedAmount, originalAmount: planInfo.amount, waitlistDiscount: isWaitlistMember, earlyAdopterDiscount, betaFree: false } });
 });
 
 // ─── POST /api/subscriptions/activate ────────────────────────────────────────
@@ -160,9 +216,15 @@ router.post("/subscriptions/activate", async (req, res) => {
   }
   const planInfo = resolvePlan(plan, months);
 
-  // Verify the payment actually succeeded
+  // Beta testers activate without any payment — skip gateway verification.
+  const signupOrder = await getSignupOrder(req.user!.userId);
+  const betaTester = await isBetaTester(signupOrder);
+
+  // Verify the payment actually succeeded (skipped for beta testers)
   let paid = false;
-  if (provider === "flutterwave") {
+  if (betaTester) {
+    paid = true;
+  } else if (provider === "flutterwave") {
     const result = await flwVerify(reference);
     paid = result.status === "successful";
   } else {

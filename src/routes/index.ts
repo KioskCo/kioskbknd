@@ -46,6 +46,7 @@ import reviewsRouter from "./reviews.js";
 import discountsRouter from "./discounts.js";
 import waitlistRouter from "./waitlist.js";
 import abandonedCartsRouter from "./abandoned-carts.js";
+import adminRouter from "./admin.js";
 
 const router: IRouter = Router();
 
@@ -71,6 +72,7 @@ router.use(analyticsRouter);
 router.use(reviewsRouter);
 router.use(discountsRouter);
 router.use(waitlistRouter);
+router.use(adminRouter);
 router.use("/api/abandoned-carts", abandonedCartsRouter);
 
 export default router;

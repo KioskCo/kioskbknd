@@ -87,4 +87,5 @@ export {
   waitlist,
   abandonedCarts,
   disputes,
+  appSettings,
 } from "./schema.js";
