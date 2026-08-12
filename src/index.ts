@@ -19,7 +19,10 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+// Bind to 0.0.0.0 explicitly — Railway's edge proxy cannot reach the container
+// when Express listens on the Node default (:: dual-stack), which surfaces as
+// "Application failed to respond" / 502 with X-Railway-Fallback: true.
+app.listen(port, "0.0.0.0", (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
