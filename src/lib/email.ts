@@ -35,10 +35,13 @@ async function createTransport(): Promise<Transporter | null> {
   let servername: string | undefined;
   if (!isIP(host)) {
     try {
-      const [ipv4] = await dns.resolve4(host);
-      if (ipv4) {
+      // dns.lookup uses the OS resolver (getaddrinfo) rather than Node's
+      // c-ares resolver, so it matches whatever the container's DNS actually
+      // serves and is far less likely to fail in managed environments.
+      const { address } = await dns.lookup(host, { family: 4 });
+      if (address) {
         servername = host;
-        host = ipv4;
+        host = address;
       }
     } catch {
       // Fall back to the hostname; nodemailer's own resolver will retry.
