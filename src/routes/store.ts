@@ -9,6 +9,7 @@ import { db, templates, users, products, contactMessages } from "../db/index.js"
 import { eq, and } from "drizzle-orm";
 import { Router } from "express";
 import { sendContactNotificationEmail } from "../lib/email.js";
+import { injectWhatsAppNumber } from "../lib/storeTemplate.js";
 
 const router = Router();
 
@@ -139,7 +140,7 @@ router.get("/store/by-domain", async (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=60");
   res.json({
     success: true,
-    templateJson,
+    templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),
     storeName: user.businessName ?? user.name ?? domain,
     launchUrl: tmpl.launchUrl ?? `https://${domain}`,
     vendorId: user.id,
@@ -200,7 +201,7 @@ router.get("/store/:username", async (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=60");
   res.json({
     success: true,
-    templateJson,
+    templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),
     storeName: user.businessName ?? user.name ?? username,
     launchUrl: tmpl.launchUrl,
     vendorId: user.id,

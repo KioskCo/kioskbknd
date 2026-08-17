@@ -90,6 +90,13 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS sale_ends_at TIMESTAMPTZ;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS preorder             BOOLEAN DEFAULT false;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS preorder_release_date TIMESTAMPTZ;
 
+-- Prevent a vendor uploading the same product name twice (case-insensitive).
+-- Partial: only enforces while active so a soft-deleted product can be re-added.
+-- Matches Drizzle's uq_product_vendor_name_active index.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_product_vendor_name_active
+  ON products(user_id, lower(name))
+  WHERE active = true;
+
 -- ── orders ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS orders (
   id                 TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
@@ -127,6 +134,11 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS commission             DECIMAL(12,2)
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS dispute_status         TEXT DEFAULT 'none';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS dispute_reason         TEXT;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS refunded_at            TIMESTAMPTZ;
+
+-- One paid reference = one order (anti-fraud). Drizzle marks payment_reference unique.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_orders_payment_reference
+  ON orders(payment_reference)
+  WHERE payment_reference IS NOT NULL;
 
 -- ── order_items ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS order_items (
