@@ -1,12 +1,19 @@
 /**
- * Email service — sends transactional emails via Resend (HTTP API) by default,
- * falling back to SMTP (nodemailer) when Resend isn't configured.
+ * Email service — sends transactional emails via an HTTPS email API (SendGrid
+ * preferred, then Resend), falling back to SMTP (nodemailer) when no API key
+ * is configured.
  *
- * Resend (recommended for production):
- *   RESEND_API_KEY  — key from resend.com/api-keys. Sent over HTTPS (port 443),
- *                     which works in environments that block SMTP outbound.
- *   SMTP_FROM       — verified sender; use "Kiosk <onboarding@resend.dev>" until
- *                     your own domain is verified under Resend → Domains.
+ * SendGrid (recommended — works without owning a domain):
+ *   SENDGRID_API_KEY  — key from app.sendgrid.com → Settings → API Keys.
+ *   SMTP_FROM         — "Name <email>". Verify the sender email under
+ *                       app.sendgrid.com → Settings → Sender Authentication →
+ *                       Single Sender Verification (SendGrid emails a
+ *                       confirmation link to that inbox — no DNS needed).
+ *   Sent over HTTPS (port 443), which works where SMTP outbound is blocked.
+ *
+ * Resend (requires a domain you can add DNS records to):
+ *   RESEND_API_KEY  — key from resend.com/api-keys.
+ *   SMTP_FROM       — must use a sender on a domain verified at resend.com/domains.
  *
  * SMTP fallback (dev / local):
  *   SMTP_HOST       — e.g. smtp.gmail.com or smtp.sendgrid.net
@@ -15,7 +22,7 @@
  *   SMTP_PASS       — SMTP password or app password
  *   SMTP_FROM       — "display name <email>" for the From header
  *
- * Falls back to console logging when neither is configured (dev mode).
+ * Falls back to console logging when none is configured (dev mode).
  */
 
 import { isIP } from "node:net";
@@ -24,6 +31,7 @@ import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { logger } from "./logger.js";
 
+const SENDGRID_API_KEY = process.env["SENDGRID_API_KEY"] ?? "";
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const SMTP_HOST = process.env["SMTP_HOST"] ?? "";
 const SMTP_PORT = parseInt(process.env["SMTP_PORT"] ?? "587", 10);
@@ -112,12 +120,60 @@ async function sendViaResend(to: string, subject: string, html: string, options?
   }
 }
 
+// ─── SendGrid (HTTP API) ─────────────────────────────────────────────────────
+// Preferred: single-sender verification only needs an email confirmation link,
+// no domain/DNS required. Runs over HTTPS (port 443).
+
+function parseFrom(from: string): { name: string; email: string } {
+  const m = /^(.*)<([^>]+)>$/.exec(from.trim());
+  if (m) return { name: m[1]!.trim() || "Kiosk", email: m[2]!.trim() };
+  return { name: "Kiosk", email: from.trim() };
+}
+
+async function sendViaSendgrid(to: string, subject: string, html: string, options?: MailOptions): Promise<void> {
+  const from = parseFrom(SMTP_FROM);
+
+  const headers: Record<string, string> = {};
+  if (options?.messageId) headers["Message-ID"] = options.messageId;
+  if (options?.inReplyTo) headers["In-Reply-To"] = options.inReplyTo;
+  if (options?.references) headers["References"] = options.references;
+
+  const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${SENDGRID_API_KEY}`,
+    },
+    body: JSON.stringify({
+      from,
+      personalizations: [
+        {
+          to: [{ email: to }],
+          ...(Object.keys(headers).length ? { headers } : {}),
+        },
+      ],
+      subject,
+      content: [{ type: "text/html", value: html }],
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`SendGrid API error ${res.status}: ${detail}`);
+  }
+}
+
 export async function sendMail(
   to: string,
   subject: string,
   html: string,
   options?: MailOptions
 ): Promise<void> {
+  if (SENDGRID_API_KEY) {
+    await sendViaSendgrid(to, subject, html, options);
+    return;
+  }
+
   if (RESEND_API_KEY) {
     await sendViaResend(to, subject, html, options);
     return;
