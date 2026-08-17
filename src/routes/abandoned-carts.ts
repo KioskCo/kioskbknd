@@ -15,6 +15,7 @@ import { z } from "zod";
 import { abandonedCarts, db, templates, users } from "../db/index.js";
 import { requireAuth } from "../middlewares/auth.js";
 import { sendAbandonedCartEmail } from "../lib/email.js";
+import { storeUrl as buildStoreUrl } from "../lib/shopBase.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -150,7 +151,7 @@ router.post("/send-recovery", async (req, res) => {
         .where(and(eq(templates.userId, cart.userId), eq(templates.launched, true)))
         .limit(1);
 
-      const storeUrl = tmpl?.launchUrl ?? `${process.env["SHOP_BASE_URL"] ?? "https://keeosk.store"}/@${vendor.username}`;
+      const storeUrl = tmpl?.launchUrl ?? buildStoreUrl(vendor.username);
       const items = cart.items as Array<{ name: string; price: number; imageUrl?: string }>;
 
       await sendAbandonedCartEmail({

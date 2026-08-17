@@ -16,6 +16,7 @@ import { resolveDeliveryZone, computeDeliveryFee } from "../lib/delivery.js";
 import { computeProcessingFee } from "../lib/fees.js";
 import { logger } from "../lib/logger.js";
 import { Router } from "express";
+import { storeUrl as buildStoreUrl } from "../lib/shopBase.js";
 import { z } from "zod";
 
 const router = Router();
@@ -326,7 +327,7 @@ router.post("/buyers/orders", async (req, res) => {
             const [vendor] = await db.select({ username: users.username, businessName: users.businessName })
               .from(users).where(eq(users.id, vendorId)).limit(1);
             const storeName = vendor?.businessName ?? "the store";
-            const storeUrl = vendor?.username ? `https://keeosk.store/@${vendor.username}` : storeName;
+            const storeUrl = vendor?.username ? buildStoreUrl(vendor.username) : storeName;
 
             const msg = `Hi ${ref.buyerName}! Someone you referred just placed an order at ${storeName}. Here's 10% off your next order — use code ${rewardCode} at checkout: ${storeUrl}`;
             await sendSMS(ref.buyerPhone, msg).catch(() => {});
@@ -455,7 +456,7 @@ router.get("/buyers/my-referral", async (req, res) => {
     .where(eq(users.id, vendorId))
     .limit(1);
 
-  const storeBase = vendor?.username ? `https://keeosk.store/@${vendor.username}` : "";
+  const storeBase = vendor?.username ? buildStoreUrl(vendor.username) : "";
 
   res.json({
     success: true,

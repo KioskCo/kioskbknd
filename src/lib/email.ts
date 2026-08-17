@@ -30,6 +30,7 @@ import { promises as dns } from "node:dns";
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { logger } from "./logger.js";
+import { orderBaseUrl } from "./shopBase.js";
 
 const SENDGRID_API_KEY = process.env["SENDGRID_API_KEY"] ?? "";
 const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
@@ -244,7 +245,7 @@ export async function sendEscrowPinEmail(params: {
       </p>
 
       <div style="margin-top:24px;text-align:center">
-        <a href="${process.env["SHOP_BASE_URL"]?.replace("/@", "/order/") ?? "https://keeosk.store/order/"}${orderNumber}"
+        <a href="${orderBaseUrl()}${orderNumber}"
            style="display:inline-block;background:#0a0a0a;color:#fff;text-decoration:none;padding:12px 28px;border-radius:999px;font-size:14px;font-weight:600">
           Track your order
         </a>
@@ -298,7 +299,7 @@ export async function sendOrderConfirmationEmail(params: {
       <p style="color:#555;font-size:13px"><strong>Delivery to:</strong> ${deliveryAddress}</p>
 
       <div style="margin-top:24px;text-align:center">
-        <a href="${process.env["SHOP_BASE_URL"]?.replace("/@", "/order/") ?? "https://keeosk.store/order/"}${orderNumber}"
+        <a href="${orderBaseUrl()}${orderNumber}"
            style="display:inline-block;background:#0a0a0a;color:#fff;text-decoration:none;padding:12px 28px;border-radius:999px;font-size:14px;font-weight:600">
           Track your order
         </a>
@@ -343,7 +344,7 @@ export async function sendDispatchedEmail(params: {
        </div>`
     : "";
 
-  const orderLink = `${process.env["SHOP_BASE_URL"]?.replace("/@", "/order/") ?? "https://keeosk.store/order/"}${orderNumber}`;
+  const orderLink = `${orderBaseUrl()}${orderNumber}`;
 
   const html = `
     <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px">

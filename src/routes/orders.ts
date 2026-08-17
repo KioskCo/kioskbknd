@@ -18,6 +18,7 @@ import { requireAuth } from "../middlewares/auth.js";
 import { sendOrderConfirmation, sendTextMessage } from "../lib/whatsapp.js";
 import { sendSMS } from "../lib/termii.js";
 import { sendPushToMany } from "../lib/pushNotifications.js";
+import { storeUrl as buildStoreUrl } from "../lib/shopBase.js";
 import { getPushTokens } from "./auth.js";
 import { rateLimitHit } from "../lib/redis.js";
 import { refundOrder } from "../jobs/refund.js";
@@ -204,7 +205,7 @@ router.patch("/orders/:id/status", async (req, res) => {
           .where(eq(users.id, req.user!.userId))
           .limit(1);
 
-        const storeUrl = tmpl?.launchUrl ?? `https://keeosk.store/@${vendor?.username ?? ""}`;
+        const storeUrl = tmpl?.launchUrl ?? buildStoreUrl(vendor?.username ?? "");
         const reviewUrl = `${storeUrl}/review?orderId=${existing.id}`;
         const storeName = vendor?.name ?? vendor?.username ?? "the store";
 

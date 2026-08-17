@@ -10,6 +10,7 @@ import { eq, and } from "drizzle-orm";
 import { Router } from "express";
 import { sendContactNotificationEmail } from "../lib/email.js";
 import { injectWhatsAppNumber } from "../lib/storeTemplate.js";
+import { storeUrl as buildStoreUrl } from "../lib/shopBase.js";
 
 const router = Router();
 
@@ -56,7 +57,7 @@ router.get("/store/:username/feed.xml", async (req, res) => {
     .where(and(eq(products.userId, user.id), eq(products.active, true)))
     .limit(200);
 
-  const storeUrl = tmpl?.launchUrl ?? `https://keeosk.store/@${username}`;
+  const storeUrl = tmpl?.launchUrl ?? buildStoreUrl(username);
   const storeName = user.businessName ?? user.name ?? username;
   const now = new Date().toUTCString();
 

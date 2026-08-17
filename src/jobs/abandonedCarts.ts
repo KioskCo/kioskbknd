@@ -10,6 +10,7 @@
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
 import { abandonedCarts, db, templates, users } from "../db/index.js";
 import { sendAbandonedCartEmail } from "../lib/email.js";
+import { storeUrl as buildStoreUrl } from "../lib/shopBase.js";
 import { logger } from "../lib/logger.js";
 
 const ABANDON_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour idle
@@ -56,7 +57,7 @@ export async function processAbandonedCartRecovery(): Promise<{ sent: number; to
 
       const storeUrl =
         tmpl?.launchUrl ??
-        `${process.env["SHOP_BASE_URL"] ?? "https://kiosk.store"}/@${vendor.username}`;
+        buildStoreUrl(vendor.username);
       const items = cart.items as Array<{ name: string; price: number; imageUrl?: string }>;
 
       await sendAbandonedCartEmail({
