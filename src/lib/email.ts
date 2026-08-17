@@ -11,7 +11,10 @@
  * Falls back to console logging when SMTP_HOST is not configured (dev mode).
  */
 
+import { isIP } from "node:net";
+import { promises as dns } from "node:dns";
 import nodemailer from "nodemailer";
+import type { Transporter } from "nodemailer";
 import { logger } from "./logger.js";
 
 const SMTP_HOST = process.env["SMTP_HOST"] ?? "";
@@ -20,13 +23,34 @@ const SMTP_USER = process.env["SMTP_USER"] ?? "";
 const SMTP_PASS = process.env["SMTP_PASS"] ?? "";
 const SMTP_FROM = process.env["SMTP_FROM"] ?? "Kiosk <noreply@keeosk.store>";
 
-function createTransport() {
+// Resolve the SMTP host to an IPv4 address up front. Hosts like smtp.gmail.com
+// advertise both A and AAAA records; environments without IPv6 routing (e.g.
+// Railway containers) fail with ENETUNREACH when nodemailer picks an IPv6
+// address. The original hostname is kept as the TLS servername (SNI) so
+// certificate validation still works against a raw IP.
+async function createTransport(): Promise<Transporter | null> {
   if (!SMTP_HOST) return null;
+
+  let host = SMTP_HOST;
+  let servername: string | undefined;
+  if (!isIP(host)) {
+    try {
+      const [ipv4] = await dns.resolve4(host);
+      if (ipv4) {
+        servername = host;
+        host = ipv4;
+      }
+    } catch {
+      // Fall back to the hostname; nodemailer's own resolver will retry.
+    }
+  }
+
   return nodemailer.createTransport({
-    host: SMTP_HOST,
+    host,
     port: SMTP_PORT,
     secure: SMTP_PORT === 465,
     auth: { user: SMTP_USER, pass: SMTP_PASS },
+    tls: servername ? { servername } : undefined,
     // Fail fast instead of hanging if the network silently blocks SMTP.
     connectionTimeout: 12000,
     greetingTimeout: 12000,
@@ -34,7 +58,11 @@ function createTransport() {
   });
 }
 
-const transport = createTransport();
+let transportPromise: Promise<Transporter | null> | null = null;
+function getTransport(): Promise<Transporter | null> {
+  if (!transportPromise) transportPromise = createTransport();
+  return transportPromise;
+}
 
 export async function sendMail(
   to: string,
@@ -42,6 +70,7 @@ export async function sendMail(
   html: string,
   options?: { messageId?: string; inReplyTo?: string; references?: string }
 ): Promise<void> {
+  const transport = await getTransport();
   if (!transport) {
     logger.warn({ to, subject }, "Email not configured — message logged only");
     logger.info({ to, subject, html }, "DEV email output");
