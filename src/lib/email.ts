@@ -1,14 +1,21 @@
 /**
- * Email service — sends transactional emails via SMTP (nodemailer).
+ * Email service — sends transactional emails via Resend (HTTP API) by default,
+ * falling back to SMTP (nodemailer) when Resend isn't configured.
  *
- * Required environment variables:
+ * Resend (recommended for production):
+ *   RESEND_API_KEY  — key from resend.com/api-keys. Sent over HTTPS (port 443),
+ *                     which works in environments that block SMTP outbound.
+ *   SMTP_FROM       — verified sender; use "Kiosk <onboarding@resend.dev>" until
+ *                     your own domain is verified under Resend → Domains.
+ *
+ * SMTP fallback (dev / local):
  *   SMTP_HOST       — e.g. smtp.gmail.com or smtp.sendgrid.net
  *   SMTP_PORT       — typically 587 (TLS) or 465 (SSL)
  *   SMTP_USER       — SMTP username / email address
  *   SMTP_PASS       — SMTP password or app password
  *   SMTP_FROM       — "display name <email>" for the From header
  *
- * Falls back to console logging when SMTP_HOST is not configured (dev mode).
+ * Falls back to console logging when neither is configured (dev mode).
  */
 
 import { isIP } from "node:net";
@@ -17,6 +24,7 @@ import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { logger } from "./logger.js";
 
+const RESEND_API_KEY = process.env["RESEND_API_KEY"] ?? "";
 const SMTP_HOST = process.env["SMTP_HOST"] ?? "";
 const SMTP_PORT = parseInt(process.env["SMTP_PORT"] ?? "587", 10);
 const SMTP_USER = process.env["SMTP_USER"] ?? "";
@@ -67,12 +75,54 @@ function getTransport(): Promise<Transporter | null> {
   return transportPromise;
 }
 
+interface MailOptions {
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+// ─── Resend (HTTP API) ────────────────────────────────────────────────────────
+// Uses port 443 (HTTPS), which is reachable from any network — including
+// Railway containers where outbound SMTP (ports 587/465) is silently dropped.
+
+async function sendViaResend(to: string, subject: string, html: string, options?: MailOptions): Promise<void> {
+  const headers: Record<string, string> = {};
+  if (options?.messageId) headers["Message-ID"] = options.messageId;
+  if (options?.inReplyTo) headers["In-Reply-To"] = options.inReplyTo;
+  if (options?.references) headers["References"] = options.references;
+
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+    },
+    body: JSON.stringify({
+      from: SMTP_FROM,
+      to: [to],
+      subject,
+      html,
+      ...(Object.keys(headers).length ? { headers } : {}),
+    }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Resend API error ${res.status}: ${detail}`);
+  }
+}
+
 export async function sendMail(
   to: string,
   subject: string,
   html: string,
-  options?: { messageId?: string; inReplyTo?: string; references?: string }
+  options?: MailOptions
 ): Promise<void> {
+  if (RESEND_API_KEY) {
+    await sendViaResend(to, subject, html, options);
+    return;
+  }
+
   const transport = await getTransport();
   if (!transport) {
     logger.warn({ to, subject }, "Email not configured — message logged only");
