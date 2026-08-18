@@ -30,6 +30,7 @@ app.use(cors());
 // Capture the raw body buffer so webhook routes can verify HMAC signatures on
 // the exact bytes Paystack/Flutterwave sent (re-serialising req.body changes key order).
 app.use(express.json({
+  limit: "2mb",
   verify: (req: Request & { rawBody?: Buffer }, _res: Response, buf: Buffer) => {
     req.rawBody = buf;
   },
