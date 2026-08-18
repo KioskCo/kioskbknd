@@ -6,7 +6,7 @@
  */
 
 import { db, templates, users, products, contactMessages } from "../db/index.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { Router } from "express";
 import { sendContactNotificationEmail } from "../lib/email.js";
 import { injectWhatsAppNumber } from "../lib/storeTemplate.js";
@@ -123,6 +123,7 @@ router.get("/store/by-domain", async (req, res) => {
     .select()
     .from(templates)
     .where(and(eq(templates.userId, user.id), eq(templates.launched, true)))
+    .orderBy(desc(templates.updatedAt))
     .limit(1);
 
   if (!tmpl) {
@@ -138,7 +139,7 @@ router.get("/store/by-domain", async (req, res) => {
     return;
   }
 
-  res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=60");
+  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=30");
   res.json({
     success: true,
     templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),
@@ -171,6 +172,7 @@ router.get("/store/:username", async (req, res) => {
     .select()
     .from(templates)
     .where(and(eq(templates.userId, user.id), eq(templates.launched, true)))
+    .orderBy(desc(templates.updatedAt))
     .limit(1);
 
   if (!tmpl) {
@@ -198,8 +200,8 @@ router.get("/store/:username", async (req, res) => {
     return;
   }
 
-  // Cache template at edge/browser for 5 min — reduces round-trips on repeat visits
-  res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=60");
+  // Cache template at edge/browser for 30s — edits reflect quickly on the live shop
+  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=30");
   res.json({
     success: true,
     templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),

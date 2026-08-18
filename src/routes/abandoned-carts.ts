@@ -8,7 +8,7 @@
  */
 
 import crypto from "crypto";
-import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import { and, eq, desc, isNull, lt, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 
@@ -149,6 +149,7 @@ router.post("/send-recovery", async (req, res) => {
         .select({ launchUrl: templates.launchUrl })
         .from(templates)
         .where(and(eq(templates.userId, cart.userId), eq(templates.launched, true)))
+        .orderBy(desc(templates.updatedAt))
         .limit(1);
 
       const storeUrl = tmpl?.launchUrl ?? buildStoreUrl(vendor.username);

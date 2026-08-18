@@ -197,6 +197,7 @@ router.patch("/orders/:id/status", async (req, res) => {
           .select({ launchUrl: templates.launchUrl })
           .from(templates)
           .where(and(eq(templates.userId, req.user!.userId), eq(templates.launched, true)))
+          .orderBy(desc(templates.updatedAt))
           .limit(1);
 
         const [vendor] = await db
