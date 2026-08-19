@@ -152,7 +152,12 @@ router.get("/store/by-domain", async (req, res) => {
     return;
   }
 
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=30");
+  // Short cache: mostly protects against a burst of near-simultaneous requests
+  // for the same store, not meant to outlast how long an edit takes to notice.
+  // The debounced editor sync already takes ~2s after the last change; this
+  // used to add up to 60s more on top of that, which read as "my edit isn't
+  // syncing" far more often than an actual sync bug did.
+  res.setHeader("Cache-Control", "public, max-age=5, stale-while-revalidate=5");
   res.json({
     success: true,
     templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),
@@ -214,7 +219,12 @@ router.get("/store/:username", async (req, res) => {
   }
 
   // Cache template at edge/browser for 30s — edits reflect quickly on the live shop
-  res.setHeader("Cache-Control", "public, max-age=30, stale-while-revalidate=30");
+  // Short cache: mostly protects against a burst of near-simultaneous requests
+  // for the same store, not meant to outlast how long an edit takes to notice.
+  // The debounced editor sync already takes ~2s after the last change; this
+  // used to add up to 60s more on top of that, which read as "my edit isn't
+  // syncing" far more often than an actual sync bug did.
+  res.setHeader("Cache-Control", "public, max-age=5, stale-while-revalidate=5");
   res.json({
     success: true,
     templateJson: injectWhatsAppNumber(templateJson, user.whatsappNumber ?? ""),
