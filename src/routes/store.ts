@@ -131,6 +131,19 @@ router.get("/store/by-domain", async (req, res) => {
     return;
   }
 
+  // Store is live but owner has temporarily paused it — signal maintenance page,
+  // same as the path-based (/@username) route does.
+  if (tmpl.storePaused) {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      success: true,
+      paused: true,
+      storeName: user.businessName ?? user.name ?? domain,
+      launchUrl: tmpl.launchUrl ?? `https://${domain}`,
+    });
+    return;
+  }
+
   const settings = (tmpl.settings ?? {}) as Record<string, unknown>;
   const templateJson = settings["templateJson"] as string | undefined;
 
