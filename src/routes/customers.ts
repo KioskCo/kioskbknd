@@ -15,6 +15,8 @@ import { z } from "zod";
 import { requireAuth } from "../middlewares/auth.js";
 import { rateLimit } from "../middlewares/rateLimit.js";
 import { sendMail } from "../lib/email.js";
+import { getPushTokens } from "./auth.js";
+import { sendPushToMany } from "../lib/pushNotifications.js";
 
 const router = Router();
 
@@ -110,14 +112,39 @@ router.post(
 
     const { vendorId, email, name, phone, source } = parsed.data;
 
-    await db.execute(sql`
+    // (xmax = 0) is a standard Postgres idiom for "this row was actually just
+    // inserted, not merely touched by the ON CONFLICT path" — a shop's
+    // checkout form re-submits the same email on every order, and pushing a
+    // notification for every one of those (someone who's already subscribed,
+    // nothing changed) would just be noise. Only a genuine first-time signup
+    // notifies the vendor.
+    const upsertResult = await db.execute(sql`
       INSERT INTO newsletter_subscribers (user_id, email, name, phone, source)
       VALUES (${vendorId}, ${email.toLowerCase()}, ${name ?? null}, ${phone ?? null}, ${source ?? "shop"})
       ON CONFLICT (user_id, email) DO UPDATE SET
         subscribed = true,
         name = COALESCE(EXCLUDED.name, newsletter_subscribers.name),
         phone = COALESCE(EXCLUDED.phone, newsletter_subscribers.phone)
+      RETURNING (xmax = 0) AS inserted
     `);
+    const upsertRows = Array.isArray(upsertResult) ? upsertResult : (upsertResult as any).rows ?? [];
+    const isNewSubscriber = upsertRows[0]?.inserted === true;
+
+    // Push straight to the vendor's phone — this is what actually makes it show
+    // up in the OS notification tray and arrive whether or not the app happens
+    // to be open. (The in-app notification centre is a separate, client-side
+    // concern — it just mirrors this when the app is next opened.) "default"
+    // sound = the device's own standard notification tone, not overly loud.
+    if (isNewSubscriber) {
+      getPushTokens(vendorId).then((tokens) => {
+        sendPushToMany(tokens, {
+          title: "New newsletter signup 📬",
+          body: name ? `${name} (${email}) just joined your newsletter.` : `${email} just joined your newsletter.`,
+          data: { type: "newsletter_signup" },
+          sound: "default",
+        });
+      }).catch(() => {});
+    }
 
     res.json({ success: true, message: "Subscribed successfully" });
   }

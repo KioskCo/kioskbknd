@@ -11,6 +11,11 @@ import { logger } from "./logger";
 
 const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
+// Must match the Android notification channel the app creates in
+// AppContext.tsx's registerPushToken(). Without this, Android ignores the
+// app's channel entirely and uses its own generic default one instead.
+const ANDROID_CHANNEL_ID = "kiosk-alerts";
+
 export interface PushMessage {
   title: string;
   body: string;
@@ -42,6 +47,7 @@ export async function sendPushNotification(
         data: msg.data ?? {},
         sound: msg.sound ?? "default",
         badge: msg.badge,
+        channelId: ANDROID_CHANNEL_ID,
       }),
     });
 
@@ -71,6 +77,8 @@ export async function sendPushToMany(
           body: msg.body,
           data: msg.data ?? {},
           sound: msg.sound ?? "default",
+          badge: msg.badge,
+          channelId: ANDROID_CHANNEL_ID,
         }))
       ),
     });
