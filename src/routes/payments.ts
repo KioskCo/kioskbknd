@@ -7,9 +7,11 @@
  * POST /api/payments/webhook/flutterwave — Flutterwave webhook receiver
  */
 
-import { db, orders, users } from "../db/index.js";
+import { db, orders, users, walletTransactions } from "../db/index.js";
 import { and, eq } from "drizzle-orm";
 import { Router, type Request } from "express";
+import { sendPushToMany } from "../lib/pushNotifications.js";
+import { getPushTokens } from "./auth.js";
 
 // Express augmentation so TypeScript recognises req.rawBody set by app.ts verify hook.
 declare module "express-serve-static-core" {
@@ -200,7 +202,7 @@ router.post("/payments/webhook/paystack", async (req, res) => {
 
   const { event, data } = req.body as {
     event: string;
-    data: { reference: string; status: string; channel: string };
+    data: { reference: string; status: string; channel: string; transfer_code?: string };
   };
 
   req.log.info({ event, reference: data.reference }, "Paystack webhook received");
@@ -214,6 +216,54 @@ router.post("/payments/webhook/paystack", async (req, res) => {
       channel: data.channel,
       idempotencyKey: `paystack:${data.reference}:${event}`,
     });
+  }
+
+  // Withdrawals (bank transfers OUT to the vendor) are asynchronous at Paystack's
+  // end — POST /wallet/withdraw only ever sees "pending" or an immediate synchronous
+  // failure. These events are the only way the vendor finds out whether the money
+  // actually landed. wallet.ts stores the wallet_transactions row keyed by
+  // transfer_code (see the update right after initiateTransfer()), so that's what
+  // ties a webhook event back to the right withdrawal.
+  if (event === "transfer.success" || event === "transfer.failed" || event === "transfer.reversed") {
+    const transferCode = data.transfer_code;
+    if (transferCode) {
+      const [txn] = await db
+        .select()
+        .from(walletTransactions)
+        .where(eq(walletTransactions.reference, transferCode))
+        .limit(1);
+
+      // Idempotent — a webhook can be redelivered, only act on it once.
+      if (txn && txn.status === "pending") {
+        if (event === "transfer.success") {
+          await db.update(walletTransactions).set({ status: "completed" }).where(eq(walletTransactions.id, txn.id));
+          getPushTokens(txn.userId).then((tokens) => {
+            sendPushToMany(tokens, {
+              title: "✅ Withdrawal completed",
+              body: `₦${parseFloat(String(txn.amount)).toLocaleString("en-NG")} has landed in your bank account.`,
+              data: { type: "withdrawal_completed", txnId: txn.id },
+            });
+          }).catch(() => {});
+        } else {
+          // transfer.failed / transfer.reversed — the wallet was already debited
+          // when the withdrawal was initiated. NOT auto-re-crediting here: the
+          // transfer fee charged to the vendor isn't stored as its own field
+          // (only embedded in the transaction's description text), so precisely
+          // reconstructing "amount + fee" to reverse is not reliable enough to
+          // do unattended against a real balance. Flagging loudly instead so
+          // it's not silently lost, and a human can verify + credit correctly.
+          await db.update(walletTransactions).set({ status: "failed" }).where(eq(walletTransactions.id, txn.id));
+          req.log.error({ txnId: txn.id, userId: txn.userId, event }, "Withdrawal transfer failed after initiation — needs manual wallet review");
+          getPushTokens(txn.userId).then((tokens) => {
+            sendPushToMany(tokens, {
+              title: "⚠️ Withdrawal failed",
+              body: `Your ₦${parseFloat(String(txn.amount)).toLocaleString("en-NG")} withdrawal could not be completed. Our team has been notified — contact support if it isn't resolved soon.`,
+              data: { type: "withdrawal_failed", txnId: txn.id },
+            });
+          }).catch(() => {});
+        }
+      }
+    }
   }
 
   res.sendStatus(200);
