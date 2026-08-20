@@ -16,6 +16,16 @@ import { eq, desc, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middlewares/auth.js";
+import { shopBaseUrl } from "../lib/shopBase.js";
+
+// The vendor-invite link's domain — derived from the same SHOP_BASE_URL env var
+// that drives every other link on the platform (see lib/shopBase.ts), so
+// pointing the platform at a new frontend only ever requires that one env
+// change. shopBaseUrl() always ends in "/@" (it's meant to be a store-path
+// prefix); strip that back to a bare origin for this non-store link.
+function platformOrigin(): string {
+  return shopBaseUrl().replace(/\/@$/, "");
+}
 
 const router = Router();
 router.use(requireAuth);
@@ -70,7 +80,7 @@ router.get("/referrals", async (req, res) => {
     success: true,
     data: {
       referralCode: merchant?.referralCode,
-      referralLink: `https://kiosk.co/join?ref=${merchant?.referralCode}`,
+      referralLink: `${platformOrigin()}/join?ref=${merchant?.referralCode}`,
       referralBalance,
       rewardPerReferral: REFERRAL_REWARD,
       paidReferrals,
