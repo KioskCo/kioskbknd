@@ -5,7 +5,7 @@
  * GET  /api/buyers/orders/:orderNo — look up order status by order number
  */
 
-import { db, orders, orderItems, products as productsTable, users, buyerReferrals, discounts } from "../db/index.js";
+import { db, orders, orderItems, products as productsTable, users, buyerReferrals, discounts, templates } from "../db/index.js";
 import { eq, and, sql, desc } from "drizzle-orm";
 import { sendOrderConfirmationEmail, sendEscrowPinEmail } from "../lib/email.js";
 import { sendSMS } from "../lib/termii.js";
@@ -456,7 +456,18 @@ router.get("/buyers/my-referral", async (req, res) => {
     .where(eq(users.id, vendorId))
     .limit(1);
 
-  const storeBase = vendor?.username ? buildStoreUrl(vendor.username) : "";
+  // Prefer the vendor's actual launched-store URL (which reflects a custom domain,
+  // if they set one up) over reconstructing the generic keeosk.store/@username path
+  // — same source of truth as orders/abandoned-cart links use, so a referral link
+  // always lands on the same URL the vendor's other links do.
+  const [tmpl] = await db
+    .select({ launchUrl: templates.launchUrl })
+    .from(templates)
+    .where(and(eq(templates.userId, vendorId), eq(templates.launched, true)))
+    .orderBy(desc(templates.updatedAt))
+    .limit(1);
+
+  const storeBase = tmpl?.launchUrl ?? (vendor?.username ? buildStoreUrl(vendor.username) : "");
 
   res.json({
     success: true,

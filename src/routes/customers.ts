@@ -73,7 +73,16 @@ router.get("/customers/newsletter", requireAuth, async (req, res) => {
   `);
 
   // Drizzle execute() returns either the rows array directly (postgres.js) or { rows: [...] } (pg driver)
-  const data = Array.isArray(result) ? result : (result as any).rows ?? [];
+  const rows = Array.isArray(result) ? result : (result as any).rows ?? [];
+  // Normalize created_at to strict ISO 8601 — the driver hands back either a Date
+  // object or Postgres's native "YYYY-MM-DD HH:mm:ss+00" text form depending on
+  // the pool, and the latter parses as Invalid Date on Hermes (React Native's JS
+  // engine), even though it's fine in Node/V8. new Date(...).toISOString() is
+  // reliable across both input shapes and always yields something Hermes accepts.
+  const data = rows.map((r: any) => ({
+    ...r,
+    created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+  }));
   res.json({ success: true, data, total: data.length });
 });
 
@@ -128,12 +137,40 @@ router.delete("/customers/newsletter/:id", requireAuth, async (req, res) => {
   res.json({ success: true, message: "Subscriber removed" });
 });
 
+// ─── POST /api/customers/newsletter/bulk-delete ──────────────────────────────
+// Vendor removes several subscribers at once (e.g. multi-select in the app).
+
+const bulkDeleteSchema = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(500),
+});
+
+router.post("/customers/newsletter/bulk-delete", requireAuth, async (req, res) => {
+  const parsed = bulkDeleteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.issues[0]?.message });
+    return;
+  }
+  const userId = req.user!.userId;
+  const { ids } = parsed.data;
+
+  await db.execute(sql`
+    UPDATE newsletter_subscribers
+    SET subscribed = false
+    WHERE user_id = ${userId} AND id = ANY(${ids}::text[])
+  `);
+
+  res.json({ success: true, removed: ids.length });
+});
+
 // ─── POST /api/customers/newsletter/send ─────────────────────────────────────
 // Vendor sends an email broadcast to all their active subscribers.
 
 const sendNewsletterSchema = z.object({
   subject: z.string().min(1).max(150),
   body:    z.string().min(1).max(10000),
+  // Optional — restrict the send to a chosen subset (e.g. multi-select in the app).
+  // Omitted/empty means "everyone currently subscribed", the original behavior.
+  ids: z.array(z.string().min(1)).max(500).optional(),
 });
 
 router.post("/customers/newsletter/send", requireAuth, rateLimit(5, 60 * 60 * 1000), async (req, res) => {
@@ -144,17 +181,22 @@ router.post("/customers/newsletter/send", requireAuth, rateLimit(5, 60 * 60 * 10
   }
 
   const userId = req.user!.userId;
-  const { subject, body } = parsed.data;
+  const { subject, body, ids } = parsed.data;
 
   const [vendor] = await db.select({ name: users.name, businessName: users.businessName })
     .from(users).where(eq(users.id, userId)).limit(1);
 
   const storeName = vendor?.businessName ?? vendor?.name ?? "Kiosk Store";
 
-  const result = await db.execute(sql`
-    SELECT email, name FROM newsletter_subscribers
-    WHERE user_id = ${userId} AND subscribed = true
-  `);
+  const result = ids && ids.length > 0
+    ? await db.execute(sql`
+        SELECT email, name FROM newsletter_subscribers
+        WHERE user_id = ${userId} AND subscribed = true AND id = ANY(${ids}::text[])
+      `)
+    : await db.execute(sql`
+        SELECT email, name FROM newsletter_subscribers
+        WHERE user_id = ${userId} AND subscribed = true
+      `);
   const subscribers = (Array.isArray(result) ? result : (result as any).rows ?? []) as { email: string; name?: string }[];
 
   if (subscribers.length === 0) {
