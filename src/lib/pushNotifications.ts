@@ -24,6 +24,18 @@ export interface PushMessage {
   badge?: number;
 }
 
+// Without an explicit `badge` in the payload, APNs/FCM leave the app icon's
+// badge exactly as it was — they do NOT auto-increment it just because a
+// notification was delivered. That's why the icon showed nothing new until
+// the app was actually opened (the only place badge count was ever being
+// set was a client-side effect that only runs while the app is running).
+// Defaulting every push to badge 1 isn't a precise unread tally — the server
+// doesn't track a per-vendor unread count — but it guarantees the icon
+// visibly changes the moment something happens, which is the actual thing
+// being asked for. Once the app opens, AppContext's own effect immediately
+// corrects it to the real in-app unread count.
+const DEFAULT_BADGE = 1;
+
 export async function sendPushNotification(
   token: string,
   msg: PushMessage
@@ -46,7 +58,7 @@ export async function sendPushNotification(
         body: msg.body,
         data: msg.data ?? {},
         sound: msg.sound ?? "default",
-        badge: msg.badge,
+        badge: msg.badge ?? DEFAULT_BADGE,
         channelId: ANDROID_CHANNEL_ID,
       }),
     });
@@ -77,7 +89,7 @@ export async function sendPushToMany(
           body: msg.body,
           data: msg.data ?? {},
           sound: msg.sound ?? "default",
-          badge: msg.badge,
+          badge: msg.badge ?? DEFAULT_BADGE,
           channelId: ANDROID_CHANNEL_ID,
         }))
       ),

@@ -238,32 +238,93 @@ router.post("/buyers/orders", async (req, res) => {
     }
   }
 
+  // ── Idempotency ──────────────────────────────────────────────────────────
+  // orders.paymentReference is unique at the DB level (anti-fraud: one paid
+  // reference can only ever back one order). That constraint alone isn't
+  // idempotency, though — without checking for it first, a retried request
+  // for a reference that already succeeded (a flaky network response the
+  // client never saw, a double-fired gateway callback, a buyer tapping Pay
+  // again) hit that constraint as a raw, unhandled insert failure. The buyer
+  // sees "order not created" even though the real order — from the FIRST,
+  // successful attempt — already exists; a payment that genuinely went
+  // through then looks like it silently failed. Replay the original success
+  // response instead of erroring on a reference we've already processed.
+  if (paymentReference) {
+    const [existingOrder] = await db
+      .select()
+      .from(orders)
+      .where(eq(orders.paymentReference, paymentReference))
+      .limit(1);
+    if (existingOrder) {
+      res.status(200).json({
+        success: true,
+        data: {
+          orderNumber:   existingOrder.orderNumber,
+          total:         Number(existingOrder.totalAmount) + Number(existingOrder.commission ?? 0),
+          subtotal:      Number(existingOrder.totalAmount),
+          processingFee: Number(existingOrder.commission ?? 0),
+          escrowPin:     existingOrder.escrowOtp,
+          referralCode:  null,
+        },
+      });
+      return;
+    }
+  }
+
   const orderNumber = genOrderNumber();
   // Generate escrow PIN now — payment is already confirmed before placeOrder is called
   const escrowPin = String(Math.floor(1000 + Math.random() * 9000));
 
-  const [order] = await db.insert(orders).values({
-    orderNumber,
-    userId:           vendorId,
-    buyerName,
-    buyerEmail,
-    buyerPhone:       buyerPhone ?? buyerEmail,
-    buyerAddress,
-    buyerCity,
-    buyerState:     buyerState ?? null,
-    buyerZip:         buyerZip ?? "",
-    totalAmount:      String(total),
-    status:           isRealPayment ? "paid" : "pending",
-    escrowStatus:     "locked",
-    escrowOtp:        escrowPin,
-    paymentReference: paymentReference ?? null,
-    paymentProvider:  paymentProvider ?? null,
-    isPreorder,
-    expectedShipDate,
-    escrowExpiresAt,
-    releasePercentAtPayment: releasePct,
-    commission:       String(processingFee),
-  }).returning();
+  let order: typeof orders.$inferSelect | undefined;
+  try {
+    [order] = await db.insert(orders).values({
+      orderNumber,
+      userId:           vendorId,
+      buyerName,
+      buyerEmail,
+      buyerPhone:       buyerPhone ?? buyerEmail,
+      buyerAddress,
+      buyerCity,
+      buyerState:     buyerState ?? null,
+      buyerZip:         buyerZip ?? "",
+      totalAmount:      String(total),
+      status:           isRealPayment ? "paid" : "pending",
+      escrowStatus:     "locked",
+      escrowOtp:        escrowPin,
+      paymentReference: paymentReference ?? null,
+      paymentProvider:  paymentProvider ?? null,
+      isPreorder,
+      expectedShipDate,
+      escrowExpiresAt,
+      releasePercentAtPayment: releasePct,
+      commission:       String(processingFee),
+    }).returning();
+  } catch (err) {
+    // Race-condition safety net: two concurrent requests for the same
+    // reference both passed the check above before either had inserted.
+    // Whichever loses the unique-constraint race falls back to fetching the
+    // winner's row rather than erroring — same idempotent replay as above.
+    if (paymentReference) {
+      const [raceWinner] = await db.select().from(orders).where(eq(orders.paymentReference, paymentReference)).limit(1);
+      if (raceWinner) {
+        res.status(200).json({
+          success: true,
+          data: {
+            orderNumber:   raceWinner.orderNumber,
+            total:         Number(raceWinner.totalAmount) + Number(raceWinner.commission ?? 0),
+            subtotal:      Number(raceWinner.totalAmount),
+            processingFee: Number(raceWinner.commission ?? 0),
+            escrowPin:     raceWinner.escrowOtp,
+            referralCode:  null,
+          },
+        });
+        return;
+      }
+    }
+    logger.error({ err, paymentReference, vendorId }, "Order insert failed");
+    res.status(500).json({ success: false, error: "Failed to create order" });
+    return;
+  }
 
   if (!order) {
     res.status(500).json({ success: false, error: "Failed to create order" });
