@@ -63,16 +63,22 @@ export async function scheduleJobs(): Promise<void> {
   if (!redisEnabled || !escrowQueue || !abandonedCartQueue) return;
 
   // Airbag repeatable job — never needs manual scheduling.
+  // removeOnComplete/removeOnFail here (not just on the one-off payment
+  // queue) matters more than it looks: these two fire every 15 minutes
+  // forever, so with no retention limit each completed/failed run's job
+  // record piles up in Redis indefinitely — thousands a year, on a free-tier
+  // instance that's exactly the kind of thing that quietly fills a capped
+  // allocation over weeks of testing.
   await escrowQueue.upsertJobScheduler(
     "escrow-scan",
     { every: 15 * 60 * 1000 },
-    { name: "check-deadlines" },
+    { name: "check-deadlines", opts: { removeOnComplete: 20, removeOnFail: 50 } },
   );
 
   await abandonedCartQueue.upsertJobScheduler(
     "abandoned-cart-recovery",
     { every: 15 * 60 * 1000 },
-    { name: "recover" },
+    { name: "recover", opts: { removeOnComplete: 20, removeOnFail: 50 } },
   );
 
   logger.info("BullMQ repeatable jobs registered");
