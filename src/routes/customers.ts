@@ -198,6 +198,9 @@ const sendNewsletterSchema = z.object({
   // Optional — restrict the send to a chosen subset (e.g. multi-select in the app).
   // Omitted/empty means "everyone currently subscribed", the original behavior.
   ids: z.array(z.string().min(1)).max(500).optional(),
+  // Optional promo image (already uploaded to Cloudinary by the client), shown
+  // at the top of the email above the message body.
+  imageUrl: z.string().url().max(2000).optional(),
 });
 
 router.post("/customers/newsletter/send", requireAuth, rateLimit(5, 60 * 60 * 1000), async (req, res) => {
@@ -208,7 +211,7 @@ router.post("/customers/newsletter/send", requireAuth, rateLimit(5, 60 * 60 * 10
   }
 
   const userId = req.user!.userId;
-  const { subject, body, ids } = parsed.data;
+  const { subject, body, ids, imageUrl } = parsed.data;
 
   const [vendor] = await db.select({ name: users.name, businessName: users.businessName })
     .from(users).where(eq(users.id, userId)).limit(1);
@@ -238,6 +241,7 @@ router.post("/customers/newsletter/send", requireAuth, rateLimit(5, 60 * 60 * 10
     const greeting = sub.name ? `Hi ${sub.name},` : "Hi there,";
     const html = `
       <div style="font-family:sans-serif;max-width:560px;margin:auto;padding:32px">
+        ${imageUrl ? `<img src="${imageUrl}" alt="" style="width:100%;border-radius:12px;margin-bottom:24px;display:block" />` : ""}
         <p style="color:#555;margin-bottom:20px">${greeting}</p>
         <div style="color:#0a0a0a;line-height:1.7;white-space:pre-wrap">${body}</div>
         <hr style="border:none;border-top:1px solid #eee;margin:32px 0" />
