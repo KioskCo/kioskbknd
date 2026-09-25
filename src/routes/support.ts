@@ -6,7 +6,7 @@
  */
 
 import { db, users, supportMessages } from "../db/index.js";
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { Router } from "express";
 import { z } from "zod";
 import { requireAuth } from "../middlewares/auth.js";
@@ -56,6 +56,23 @@ router.post("/support/message", async (req, res) => {
     ? `[Kiosk Support] ${msgSubject} — ${vendorName}`
     : `Re: [Kiosk Support] Support — ${vendorName}`;
 
+  // Save message to DB first — this is the record GET /api/support/messages
+  // reads back, so a silent failure here made messages vanish on reload even
+  // though the client had already been told "sent" (the email side effects
+  // below succeeding doesn't help if the row itself was never persisted).
+  try {
+    await db.insert(supportMessages).values({
+      userId,
+      subject: msgSubject,
+      message,
+      status: "open",
+    });
+  } catch (err) {
+    logger.error({ err, userId }, "Failed to save support message");
+    res.status(500).json({ success: false, error: "Could not save your message. Please try again." });
+    return;
+  }
+
   // Email the platform support team — always in the same thread per vendor
   if (SUPPORT_EMAIL) {
     sendMail(
@@ -97,14 +114,6 @@ router.post("/support/message", async (req, res) => {
     ).catch(() => {});
   }
 
-  // Save message to DB so GET /api/support/messages shows history
-  await db.insert(supportMessages).values({
-    userId,
-    subject: msgSubject,
-    message,
-    status: "open",
-  }).catch(() => {});
-
   logger.info({ userId, subject: msgSubject }, "Support message received");
   res.json({ success: true, message: "Message sent. We'll get back to you within 24 hours." });
 });
@@ -115,15 +124,25 @@ router.post("/support/message", async (req, res) => {
 router.get("/support/messages", async (req, res) => {
   const userId = req.user!.userId;
 
-  const rows = await db.execute(sql`
-    SELECT id, message, subject, status, reply, created_at
-    FROM support_messages
-    WHERE user_id = ${userId}
-    ORDER BY created_at DESC
-    LIMIT 50
-  `).catch(() => ({ rows: [] as any[] }));
+  const rows = await db
+    .select()
+    .from(supportMessages)
+    .where(eq(supportMessages.userId, userId))
+    .orderBy(desc(supportMessages.createdAt))
+    .limit(50)
+    .catch(() => [] as (typeof supportMessages.$inferSelect)[]);
 
-  const data = Array.isArray(rows) ? rows : (rows as any).rows ?? [];
+  // The typed query builder gives back a real Date for createdAt — go through
+  // the query builder rather than raw sql() specifically so that's guaranteed,
+  // and serialize it explicitly rather than relying on JSON.stringify to catch it.
+  const data = rows.map((r) => ({
+    id: r.id,
+    message: r.message,
+    subject: r.subject,
+    status: r.status,
+    reply: r.reply,
+    created_at: r.createdAt.toISOString(),
+  }));
   res.json({ success: true, data });
 });
 
